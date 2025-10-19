@@ -18,7 +18,8 @@
   "vars": {
     "ENVIRONMENT": "production",
     "PLATFORM_NAME": "CTI Platform",
-    "CROWDSTRIKE_BASE_URL": "https://api.crowdstrike.com"
+    "CROWDSTRIKE_BASE_URL": "https://api.crowdstrike.com",
+    "SPLUNK_SEARCH": "| savedsearch cti_indicators_export"
   },
   "observability": {
     "logs": {
