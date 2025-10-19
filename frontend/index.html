@@ -25,6 +25,16 @@
       integrations: 'cti_integrations_enabled'
     };
 
+    // Single source of truth for integrations (used by Settings and IOC Status)
+    const INTEGRATIONS_CATALOG = {
+      crowdstrike: { label: 'CrowdStrike Falcon Intelligence' },
+      splunk:      { label: 'Splunk ES Cloud' },
+      virustotal:  { label: 'VirusTotal' },
+      misp:        { label: 'MISP' },
+      opencti:     { label: 'OpenCTI' },
+      elastic:     { label: 'Elastic Security' }
+    };
+
     // Stable, top-level Settings view to avoid remount on each keystroke
     function SettingsView({
       darkMode,
@@ -116,21 +126,14 @@
               <div>
                 <label className="block text-sm font-medium mb-2">Integrations</label>
                 <div className="space-y-3">
-                  {[
-                    { key: 'crowdstrike', label: 'CrowdStrike Falcon Intelligence' },
-                    { key: 'splunk', label: 'Splunk ES Cloud' },
-                    { key: 'virustotal', label: 'VirusTotal' },
-                    { key: 'misp', label: 'MISP' },
-                    { key: 'opencti', label: 'OpenCTI' },
-                    { key: 'elastic', label: 'Elastic Security' }
-                  ].map(({ key, label }) => (
+                  {Object.entries(INTEGRATIONS_CATALOG).map(([key, meta]) => (
                     <div key={key} className={`p-4 rounded-lg ${darkMode ? 'bg-gray-700' : 'bg-gray-100'} flex items-center justify-between`}>
                       <div className="flex items-center gap-3">
                         <svg className={`w-5 h-5 ${currentScheme.text}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                           <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
                           <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
                         </svg>
-                        <span>{label}</span>
+                        <span>{meta.label}</span>
                       </div>
                       <label className="relative inline-block w-12 h-6">
                         <input
@@ -196,19 +199,18 @@
         }
       });
       const [enabledIntegrations, setEnabledIntegrations] = useState(() => {
+        const defaults = Object.fromEntries(Object.keys(INTEGRATIONS_CATALOG).map((key) => [key, false]));
         try {
           const stored = localStorage.getItem(STORAGE_KEYS.integrations);
-          if (stored) return JSON.parse(stored);
+          if (stored) {
+            const parsed = JSON.parse(stored);
+            // Only keep known keys; default missing ones to false
+            return Object.fromEntries(
+              Object.keys(INTEGRATIONS_CATALOG).map((key) => [key, Boolean(parsed[key])])
+            );
+          }
         } catch {}
-        // All integrations default to OFF for first-time visitors
-        return {
-          crowdstrike: false,
-          splunk: false,
-          virustotal: false,
-          misp: false,
-          opencti: false,
-          elastic: false
-        };
+        return defaults;
       });
       const [showSettings, setShowSettings] = useState(false);
       const [integrationHealth, setIntegrationHealth] = useState({});
@@ -228,7 +230,10 @@
         refreshIntegrationHealth();
       }, [enabledIntegrations]);
       useEffect(() => {
-        try { localStorage.setItem(STORAGE_KEYS.integrations, JSON.stringify(enabledIntegrations)); } catch {}
+        const normalized = Object.fromEntries(
+          Object.keys(INTEGRATIONS_CATALOG).map((key) => [key, Boolean(enabledIntegrations[key])])
+        );
+        try { localStorage.setItem(STORAGE_KEYS.integrations, JSON.stringify(normalized)); } catch {}
       }, [enabledIntegrations]);
       useEffect(() => {
         try { localStorage.setItem(STORAGE_KEYS.showOrgName, JSON.stringify(!!showOrgName)); } catch {}
@@ -690,22 +695,14 @@
             <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} p-6 rounded-lg border ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
               <h3 className="text-lg font-semibold mb-4">Integration Status</h3>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                {[
-                  { key: 'crowdstrike', label: 'Crowdstrike' },
-                  { key: 'virustotal', label: 'VirusTotal' },
-                  { key: 'abuseipdb', label: 'AbuseIPDB' },
-                  { key: 'shodan', label: 'Shodan' },
-                  { key: 'misp', label: 'MISP' },
-                  { key: 'opencti', label: 'OpenCTI' },
-                  { key: 'greynoise', label: 'GreyNoise' },
-                  { key: 'alienvault', label: 'AlienVault' }
-                ].map(({ key, label }) => {
+                {Object.entries(INTEGRATIONS_CATALOG).map(([key, meta]) => {
                   const isEnabled = !!enabledIntegrations?.[key];
-                  const isHealthy = !!integrationHealth?.[key];
+                  const hasHealth = Object.prototype.hasOwnProperty.call(integrationHealth || {}, key);
+                  const isHealthy = hasHealth ? !!integrationHealth[key] : false; // default to red until a health check exists
                   const isGood = isEnabled && isHealthy;
                   return (
                     <div key={key} className={`p-4 rounded-lg ${darkMode ? 'bg-gray-700' : 'bg-gray-50'} flex items-center justify-between`}>
-                      <span>{label}</span>
+                      <span>{meta.label.replace(' Falcon Intelligence','')}</span>
                       <div
                         className={`w-3 h-3 rounded-full ${isGood ? 'bg-green-500' : 'bg-red-500'}`}
                         title={isEnabled ? (isHealthy ? 'Enabled and reachable' : 'Enabled but failing') : 'Disabled'}
