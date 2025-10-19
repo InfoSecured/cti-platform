@@ -17,7 +17,8 @@
   ],
   "vars": {
     "ENVIRONMENT": "production",
-    "PLATFORM_NAME": "CTI Platform"
+    "PLATFORM_NAME": "CTI Platform",
+    "CROWDSTRIKE_BASE_URL": "https://api.crowdstrike.com"
   },
   "observability": {
     "logs": {

@@ -1,6 +1,16 @@
 // Minimal CrowdStrike Falcon Intel client for Cloudflare Workers
 // Uses Cloudflare KV (CTI_CACHE) to cache OAuth tokens securely.
 
+function getCrowdStrikeBaseUrl(env) {
+  const configured = (env && (env.CROWDSTRIKE_BASE_URL || env.CROWDSTRIKE_API_BASE)) ? (env.CROWDSTRIKE_BASE_URL || env.CROWDSTRIKE_API_BASE) : "https://api.crowdstrike.com";
+  try {
+    const url = new URL(configured);
+    return `${url.origin}`; // strip any trailing path
+  } catch {
+    return "https://api.crowdstrike.com";
+  }
+}
+
 export async function getCrowdStrikeToken(env) {
   if (!env || !env.CROWDSTRIKE_CLIENT_ID || !env.CROWDSTRIKE_CLIENT_SECRET) {
     throw new Error("CrowdStrike credentials are not configured in environment variables.");
@@ -21,7 +31,8 @@ export async function getCrowdStrikeToken(env) {
   formBody.set("client_id", env.CROWDSTRIKE_CLIENT_ID);
   formBody.set("client_secret", env.CROWDSTRIKE_CLIENT_SECRET);
 
-  const tokenResponse = await fetch("https://api.crowdstrike.com/oauth2/token", {
+  const tokenBase = getCrowdStrikeBaseUrl(env);
+  const tokenResponse = await fetch(`${tokenBase}/oauth2/token`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: formBody.toString(),
@@ -59,12 +70,12 @@ export async function queryCrowdStrikeIndicator(env, indicatorValue) {
   const accessToken = await getCrowdStrikeToken(env);
 
   // Indicators endpoint; exact match on indicator
-  const baseUrl = "https://api.crowdstrike.com/intel/combined/indicators/v1";
+  const intelBase = `${getCrowdStrikeBaseUrl(env)}/intel/combined/indicators/v1`;
   const params = new URLSearchParams();
   params.set("filter", `indicator:'${encodeIndicatorForFilter(sanitizedIndicator)}'`);
   params.set("limit", "5");
 
-  const indicatorsResponse = await fetch(`${baseUrl}?${params.toString()}`, {
+  const indicatorsResponse = await fetch(`${intelBase}?${params.toString()}`, {
     method: "GET",
     headers: {
       "Authorization": `Bearer ${accessToken}`,
@@ -75,7 +86,15 @@ export async function queryCrowdStrikeIndicator(env, indicatorValue) {
 
   const rawJson = await safeReadJson(indicatorsResponse);
   if (!indicatorsResponse.ok) {
-    throw new Error(`CrowdStrike indicators request failed: HTTP ${indicatorsResponse.status} ${JSON.stringify(rawJson)}`);
+    const traceId = rawJson?.meta?.trace_id || rawJson?.meta?.traceId || "unknown-trace";
+    const firstErr = Array.isArray(rawJson?.errors) && rawJson.errors.length ? rawJson.errors[0] : null;
+    const reason = firstErr?.message || firstErr?.detail || "authorization failed";
+    const code = firstErr?.code || indicatorsResponse.status;
+    // Provide actionable detail without leaking secrets
+    const hint = (code === 403)
+      ? "Check that your API key has Falcon Intelligence READ permissions and that CROWDSTRIKE_BASE_URL matches your cloud (e.g., https://api.us-2.crowdstrike.com)."
+      : "See CrowdStrike API docs for required scopes and region hostnames.";
+    throw new Error(`CrowdStrike indicators request failed: HTTP ${indicatorsResponse.status} (code ${code}) reason='${reason}' trace_id='${traceId}'. ${hint}`);
   }
 
   const items = Array.isArray(rawJson?.resources) ? rawJson.resources : [];
