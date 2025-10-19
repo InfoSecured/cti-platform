@@ -4,6 +4,12 @@
 import { queryCrowdStrikeIndicator } from "./integrations/crowdstrike";
 import { fetchSplunkThreatIntel } from "./integrations/splunk";
 
+function timedFetch(input, init = {}, ms = 4000) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort('timeout'), ms);
+  return fetch(input, { ...init, signal: controller.signal }).finally(() => clearTimeout(timeout));
+}
+
 export class IOCStorage {
   constructor(state, env) {
     this.state = state;
@@ -257,6 +263,20 @@ export default {
         return new Response(JSON.stringify({ status: 'healthy', timestamp: new Date().toISOString() }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });
+      } else if (path === '/api/integration/health') {
+        try {
+          const health = await getIntegrationHealth(env);
+          return new Response(JSON.stringify(health), {
+            status: 200,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        } catch (healthError) {
+          console.error('health check error:', healthError?.message || healthError);
+          return new Response(JSON.stringify({ error: 'health check failed' }), {
+            status: 500,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
       }
 
       return new Response('Not Found', { status: 404, headers: corsHeaders });
@@ -366,4 +386,41 @@ async function handleEnrichRequest(request, env, corsHeaders) {
   }
 
   return jsonResponse(enrichmentData, 200, { ...corsHeaders });
+}
+
+async function getIntegrationHealth(env) {
+  const results = {
+    crowdstrike: false,
+    splunk: false,
+    virustotal: Boolean(env?.VIRUSTOTAL_API_KEY),
+    abuseipdb: Boolean(env?.ABUSEIPDB_API_KEY),
+    shodan: Boolean(env?.SHODAN_API_KEY),
+    misp: Boolean(env?.MISP_API_KEY),
+    opencti: Boolean(env?.OPENCTI_API_KEY),
+    greynoise: Boolean(env?.GREYNOISE_API_KEY),
+    alienvault: Boolean(env?.ALIENVAULT_API_KEY)
+  };
+
+  try {
+    if (env?.CROWDSTRIKE_CLIENT_ID && env?.CROWDSTRIKE_CLIENT_SECRET) {
+      const base = env.CROWDSTRIKE_BASE_URL || 'https://api.crowdstrike.com';
+      const url = `${new URL(base).origin}/oauth2/token`;
+      const body = new URLSearchParams();
+      body.set('client_id', env.CROWDSTRIKE_CLIENT_ID);
+      body.set('client_secret', env.CROWDSTRIKE_CLIENT_SECRET);
+      body.set('grant_type', 'client_credentials');
+      const res = await timedFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body }, 4000);
+      results.crowdstrike = res.ok;
+    }
+  } catch (_) { results.crowdstrike = false; }
+
+  try {
+    if (env?.SPLUNK_BASE_URL && env?.SPLUNK_TOKEN) {
+      const infoUrl = `${new URL(env.SPLUNK_BASE_URL).origin}/services/server/info?output_mode=json`;
+      const res = await timedFetch(infoUrl, { headers: { Authorization: `Bearer ${env.SPLUNK_TOKEN}` } }, 4000);
+      results.splunk = res.ok;
+    }
+  } catch (_) { results.splunk = false; }
+
+  return results;
 }

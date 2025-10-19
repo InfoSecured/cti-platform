@@ -211,6 +211,22 @@
         };
       });
       const [showSettings, setShowSettings] = useState(false);
+      const [integrationHealth, setIntegrationHealth] = useState({});
+      async function refreshIntegrationHealth() {
+        try {
+          const res = await fetch('/api/integration/health');
+          const json = await res.json();
+          if (res.ok && json && typeof json === 'object') {
+            setIntegrationHealth(json);
+          }
+        } catch (err) {
+          console.error('health fetch failed', err);
+        }
+      }
+
+      useEffect(() => {
+        refreshIntegrationHealth();
+      }, [enabledIntegrations]);
       useEffect(() => {
         try { localStorage.setItem(STORAGE_KEYS.integrations, JSON.stringify(enabledIntegrations)); } catch {}
       }, [enabledIntegrations]);
@@ -568,7 +584,8 @@
         setIocSearchValue,
         handleEnrich,
         fetchIocList,
-        enabledIntegrations
+        enabledIntegrations,
+        integrationHealth
       }) {
         return (
           <div className="space-y-6">
@@ -673,12 +690,29 @@
             <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} p-6 rounded-lg border ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
               <h3 className="text-lg font-semibold mb-4">Integration Status</h3>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                {['Crowdstrike', 'VirusTotal', 'AbuseIPDB', 'Shodan', 'MISP', 'OpenCTI', 'GreyNoise', 'AlienVault'].map((service) => (
-                  <div key={service} className={`p-4 rounded-lg ${darkMode ? 'bg-gray-700' : 'bg-gray-50'} flex items-center justify-between`}>
-                    <span>{service}</span>
-                    <div className="w-3 h-3 bg-green-500 rounded-full"></div>
-                  </div>
-                ))}
+                {[
+                  { key: 'crowdstrike', label: 'Crowdstrike' },
+                  { key: 'virustotal', label: 'VirusTotal' },
+                  { key: 'abuseipdb', label: 'AbuseIPDB' },
+                  { key: 'shodan', label: 'Shodan' },
+                  { key: 'misp', label: 'MISP' },
+                  { key: 'opencti', label: 'OpenCTI' },
+                  { key: 'greynoise', label: 'GreyNoise' },
+                  { key: 'alienvault', label: 'AlienVault' }
+                ].map(({ key, label }) => {
+                  const isEnabled = !!enabledIntegrations?.[key];
+                  const isHealthy = !!integrationHealth?.[key];
+                  const isGood = isEnabled && isHealthy;
+                  return (
+                    <div key={key} className={`p-4 rounded-lg ${darkMode ? 'bg-gray-700' : 'bg-gray-50'} flex items-center justify-between`}>
+                      <span>{label}</span>
+                      <div
+                        className={`w-3 h-3 rounded-full ${isGood ? 'bg-green-500' : 'bg-red-500'}`}
+                        title={isEnabled ? (isHealthy ? 'Enabled and reachable' : 'Enabled but failing') : 'Disabled'}
+                      ></div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>
@@ -822,6 +856,7 @@
                 handleEnrich={handleEnrich}
                 fetchIocList={fetchIocList}
                 enabledIntegrations={enabledIntegrations}
+                integrationHealth={integrationHealth}
               />
             ) : currentView === 'actors' ? (
               <ThreatActorsView />
