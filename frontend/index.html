@@ -62,6 +62,10 @@
       const [threatActors, setThreatActors] = useState([]);
       const [incidents, setIncidents] = useState([]);
 
+      // IOC UI state
+      const [isLoadingIocs, setIsLoadingIocs] = useState(false);
+      const [iocSearchValue, setIocSearchValue] = useState("");
+
       // Example: load data from your Worker APIs
       // useEffect(() => {
       //   (async () => {
@@ -95,6 +99,56 @@
           reader.readAsDataURL(file);
         }
       };
+
+      // ------- API helpers -------
+      async function fetchIocList(limit = 100, offset = 0, typeFilter = "") {
+        try {
+          setIsLoadingIocs(true);
+          const parameters = new URLSearchParams();
+          parameters.set("limit", String(limit));
+          parameters.set("offset", String(offset));
+          if (typeFilter) parameters.set("type", String(typeFilter));
+
+          const response = await fetch(`/api/ioc/list?${parameters.toString()}`);
+          const payload = await response.json();
+          const list = Array.isArray(payload?.iocs) ? payload.iocs : [];
+          setIocs(list);
+        } catch (fetchError) {
+          console.error("Failed to load IOCs:", fetchError);
+        } finally {
+          setIsLoadingIocs(false);
+        }
+      }
+
+      async function handleEnrich(indicatorValue, optionalType) {
+        try {
+          const trimmed = String(indicatorValue || "").trim();
+          if (trimmed.length === 0) return;
+
+          const parameters = new URLSearchParams();
+          parameters.set("source", "crowdstrike");
+          parameters.set("value", trimmed);
+          if (optionalType) parameters.set("type", String(optionalType));
+
+          const response = await fetch(`/api/enrich?${parameters.toString()}`);
+          const payload = await response.json();
+
+          if (!response.ok) {
+            console.error("Enrich failed:", payload?.error || "unknown error");
+            return;
+          }
+
+          // Refresh list so the newly enriched IOC appears
+          await fetchIocList();
+        } catch (enrichError) {
+          console.error("Error enriching IOC:", enrichError);
+        }
+      }
+
+      // Load initial IOC list on mount
+      useEffect(() => {
+        fetchIocList().catch((mountError) => console.error("Initial IOC load failed:", mountError));
+      }, []);
 
       // SVG Icons as components
       const ShieldIcon = () => (
@@ -239,11 +293,11 @@
             <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} p-6 rounded-lg border ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
               <h3 className="text-lg font-semibold mb-4">MITRE ATT&CK Heat Map</h3>
               <div className="grid grid-cols-5 gap-2">
-                {[...Array(25)].map((_, i) => (
+                {[...Array(25)].map((_, index) => (
                   <div
-                    key={i}
+                    key={index}
                     className={`h-12 rounded ${
-                      i % 5 === 0 ? 'bg-red-500' : i % 3 === 0 ? 'bg-orange-500' : i % 2 === 0 ? 'bg-yellow-500' : 'bg-gray-600'
+                      index % 5 === 0 ? 'bg-red-500' : index % 3 === 0 ? 'bg-orange-500' : index % 2 === 0 ? 'bg-yellow-500' : 'bg-gray-600'
                     } opacity-${Math.floor(Math.random() * 5) + 3}0`}
                   />
                 ))}
@@ -286,95 +340,118 @@
         </div>
       );
 
-      const IOCView = () => (
-        <div className="space-y-6">
-          <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} p-6 rounded-lg border ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
-            <div className="flex items-center gap-4 mb-6">
-              <div className="flex-1">
-                <input
-                  type="text"
-                  placeholder="Search IOCs (IP, domain, hash, URL)..."
-                  className={`w-full px-4 py-3 rounded-lg border ${
-                    darkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-300 text-gray-900'
-                  } focus:outline-none focus:ring-2 focus:ring-${colorScheme}`}
-                />
+      function IOCView({
+        darkMode,
+        currentScheme,
+        iocs,
+        isLoadingIocs,
+        iocSearchValue,
+        setIocSearchValue,
+        handleEnrich
+      }) {
+        return (
+          <div className="space-y-6">
+            <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} p-6 rounded-lg border ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
+              <div className="flex items-center gap-4 mb-6">
+                <div className="flex-1">
+                  <input
+                    type="text"
+                    value={iocSearchValue}
+                    onChange={(event) => setIocSearchValue(event.target.value)}
+                    placeholder="Search or enrich IOCs (IP, domain, hash, URL)..."
+                    className={`w-full px-4 py-3 rounded-lg border ${
+                      darkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-300 text-gray-900'
+                    } focus:outline-none focus:ring-2`}
+                    autoFocus
+                  />
+                </div>
+                <button
+                  onClick={() => handleEnrich(iocSearchValue)}
+                  className={`bg-gradient-to-r ${currentScheme.primary} text-white px-6 py-3 rounded-lg ${currentScheme.hover} transition-colors flex items-center gap-2`}
+                >
+                  <SearchIcon />
+                  Enrich
+                </button>
               </div>
-              <button className={`bg-gradient-to-r ${currentScheme.primary} text-white px-6 py-3 rounded-lg ${currentScheme.hover} transition-colors flex items-center gap-2`}>
-                <SearchIcon />
-                Search
-              </button>
+
+              <div className="flex gap-4 mb-6">
+                <button className={`px-4 py-2 rounded-lg ${darkMode ? 'bg-gray-700' : 'bg-gray-100'}`}>All Types</button>
+                <button className={`px-4 py-2 rounded-lg ${darkMode ? 'bg-gray-700 hover:bg-gray-600' : 'bg-gray-100 hover:bg-gray-200'}`}>IPs</button>
+                <button className={`px-4 py-2 rounded-lg ${darkMode ? 'bg-gray-700 hover:bg-gray-600' : 'bg-gray-100 hover:bg-gray-200'}`}>Domains</button>
+                <button className={`px-4 py-2 rounded-lg ${darkMode ? 'bg-gray-700 hover:bg-gray-600' : 'bg-gray-100 hover:bg-gray-200'}`}>Hashes</button>
+                <button className={`px-4 py-2 rounded-lg ${darkMode ? 'bg-gray-700 hover:bg-gray-600' : 'bg-gray-100 hover:bg-gray-200'}`}>URLs</button>
+              </div>
             </div>
 
-            <div className="flex gap-4 mb-6">
-              <button className={`px-4 py-2 rounded-lg ${darkMode ? 'bg-gray-700' : 'bg-gray-100'}`}>All Types</button>
-              <button className={`px-4 py-2 rounded-lg ${darkMode ? 'bg-gray-700 hover:bg-gray-600' : 'bg-gray-100 hover:bg-gray-200'}`}>IPs</button>
-              <button className={`px-4 py-2 rounded-lg ${darkMode ? 'bg-gray-700 hover:bg-gray-600' : 'bg-gray-100 hover:bg-gray-200'}`}>Domains</button>
-              <button className={`px-4 py-2 rounded-lg ${darkMode ? 'bg-gray-700 hover:bg-gray-600' : 'bg-gray-100 hover:bg-gray-200'}`}>Hashes</button>
-              <button className={`px-4 py-2 rounded-lg ${darkMode ? 'bg-gray-700 hover:bg-gray-600' : 'bg-gray-100 hover:bg-gray-200'}`}>URLs</button>
-            </div>
-          </div>
-
-          <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-lg border ${darkMode ? 'border-gray-700' : 'border-gray-200'} overflow-hidden`}>
-            <table className="w-full">
-              <thead className={`${darkMode ? 'bg-gray-700' : 'bg-gray-50'}`}>
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Type</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Indicator</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Threat Level</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Source</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Detections</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-700">
-                {iocs.length === 0 ? (
+            <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-lg border ${darkMode ? 'border-gray-700' : 'border-gray-200'} overflow-hidden`}>
+              <table className="w-full">
+                <thead className={`${darkMode ? 'bg-gray-700' : 'bg-gray-50'}`}>
                   <tr>
-                    <td colSpan="6" className="px-6 py-8 text-center text-sm">
-                      {darkMode ? 'No IOCs found yet.' : 'No IOCs found yet.'}
-                    </td>
+                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Type</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Indicator</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Threat Level</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Source</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Detections</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Actions</th>
                   </tr>
-                ) : (
-                  iocs.map((ioc, idx) => (
-                    <tr key={idx} className={`${darkMode ? 'hover:bg-gray-700' : 'hover:bg-gray-50'}`}>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <span className={`px-2 py-1 rounded text-xs font-semibold ${darkMode ? 'bg-gray-600' : 'bg-gray-200'}`}>
-                          {ioc.type}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 font-mono text-sm">{ioc.value}</td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <span className={`px-2 py-1 rounded text-xs font-semibold ${
-                          ioc.threat === 'Critical' ? 'bg-red-500' :
-                          ioc.threat === 'High' ? 'bg-orange-500' : 'bg-yellow-500'
-                        }`}>
-                          {ioc.threat}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4">{ioc.source}</td>
-                      <td className="px-6 py-4">{ioc.detections ?? 0}</td>
-                      <td className="px-6 py-4">
-                        <button className={`${currentScheme.text} hover:underline text-sm`}>Enrich</button>
+                </thead>
+                <tbody className="divide-y divide-gray-700">
+                  {isLoadingIocs && (
+                    <tr>
+                      <td colSpan="6" className="px-6 py-6 text-center text-sm">
+                        Loading IOCs...
                       </td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+                  )}
+                  {iocs.length === 0 ? (
+                    <tr>
+                      <td colSpan="6" className="px-6 py-8 text-center text-sm">
+                        {darkMode ? 'No IOCs found yet.' : 'No IOCs found yet.'}
+                      </td>
+                    </tr>
+                  ) : (
+                    iocs.map((ioc, rowIndex) => (
+                      <tr key={rowIndex} className={`${darkMode ? 'hover:bg-gray-700' : 'hover:bg-gray-50'}`}>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <span className={`px-2 py-1 rounded text-xs font-semibold ${darkMode ? 'bg-gray-600' : 'bg-gray-200'}`}>
+                            {ioc.type}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 font-mono text-sm">{ioc.value}</td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                            ioc.threat === 'Critical' ? 'bg-red-500' :
+                            ioc.threat === 'High' ? 'bg-orange-500' : 'bg-yellow-500'
+                          }`}>
+                            {ioc.threat}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4">{ioc.source}</td>
+                        <td className="px-6 py-4">{ioc.detections ?? 0}</td>
+                        <td className="px-6 py-4">
+                          <button onClick={() => handleEnrich(ioc.value, ioc.type)} className={`${currentScheme.text} hover:underline text-sm`}>Enrich</button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
 
-          <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} p-6 rounded-lg border ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
-            <h3 className="text-lg font-semibold mb-4">Integration Status</h3>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              {['Crowdstrike', 'VirusTotal', 'AbuseIPDB', 'Shodan', 'MISP', 'OpenCTI', 'GreyNoise', 'AlienVault'].map((service) => (
-                <div key={service} className={`p-4 rounded-lg ${darkMode ? 'bg-gray-700' : 'bg-gray-50'} flex items-center justify-between`}>
-                  <span>{service}</span>
-                  <div className="w-3 h-3 bg-green-500 rounded-full"></div>
-                </div>
-              ))}
+            <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} p-6 rounded-lg border ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
+              <h3 className="text-lg font-semibold mb-4">Integration Status</h3>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                {['Crowdstrike', 'VirusTotal', 'AbuseIPDB', 'Shodan', 'MISP', 'OpenCTI', 'GreyNoise', 'AlienVault'].map((service) => (
+                  <div key={service} className={`p-4 rounded-lg ${darkMode ? 'bg-gray-700' : 'bg-gray-50'} flex items-center justify-between`}>
+                    <span>{service}</span>
+                    <div className="w-3 h-3 bg-green-500 rounded-full"></div>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
-        </div>
-      );
+        );
+      }
 
       const ThreatActorsView = () => (
         <div className="space-y-6">
@@ -563,7 +640,15 @@
             ) : currentView === 'dashboard' ? (
               <DashboardView />
             ) : currentView === 'iocs' ? (
-              <IOCView />
+              <IOCView
+                darkMode={darkMode}
+                currentScheme={currentScheme}
+                iocs={iocs}
+                isLoadingIocs={isLoadingIocs}
+                iocSearchValue={iocSearchValue}
+                setIocSearchValue={setIocSearchValue}
+                handleEnrich={handleEnrich}
+              />
             ) : currentView === 'actors' ? (
               <ThreatActorsView />
             ) : (
