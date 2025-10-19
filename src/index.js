@@ -2,6 +2,7 @@
 // DURABLE OBJECT: IOC Storage
 // ============================================================================
 import { queryCrowdStrikeIndicator } from "./integrations/crowdstrike";
+import { fetchSplunkThreatIntel } from "./integrations/splunk";
 
 export class IOCStorage {
   constructor(state, env) {
@@ -16,6 +17,8 @@ export class IOCStorage {
     try {
       if (path === '/store' && request.method === 'POST') {
         return await this.storeIOC(request);
+      } else if (path === '/store-batch' && request.method === 'POST') {
+        return await this.storeBatch(request);
       } else if (path === '/get' && request.method === 'GET') {
         return await this.getIOC(url.searchParams.get('indicator'));
       } else if (path === '/list' && request.method === 'GET') {
@@ -60,6 +63,50 @@ export class IOCStorage {
     }
 
     return new Response(JSON.stringify({ success: true, ioc }), {
+      status: 201,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+
+  async storeBatch(request) {
+    const payload = await request.json();
+    const items = Array.isArray(payload?.items) ? payload.items : [];
+
+    if (items.length === 0) {
+      return new Response(JSON.stringify({ error: 'No items provided' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    const index = (await this.state.storage.get('ioc_index')) || [];
+    let storedCount = 0;
+
+    for (const entry of items) {
+      const indicatorValue = entry?.indicator;
+      const indicatorType = entry?.type;
+      if (!indicatorValue || !indicatorType) continue;
+
+      const ioc = {
+        id: crypto.randomUUID(),
+        indicator: indicatorValue,
+        type: indicatorType,
+        enrichmentData: entry?.enrichmentData ?? null,
+        source: entry?.source ?? 'unknown',
+        timestamp: new Date().toISOString(),
+        lastUpdated: new Date().toISOString()
+      };
+
+      await this.state.storage.put(`ioc:${indicatorValue}`, ioc);
+      if (!index.includes(indicatorValue)) {
+        index.push(indicatorValue);
+      }
+      storedCount++;
+    }
+
+    await this.state.storage.put('ioc_index', index);
+
+    return new Response(JSON.stringify({ success: true, stored: storedCount }), {
       status: 201,
       headers: { 'Content-Type': 'application/json' }
     });
@@ -159,6 +206,53 @@ export default {
         return await handleIOCRequest(request, env, corsHeaders);
       } else if (path.startsWith('/api/enrich')) {
         return await handleEnrichRequest(request, env, corsHeaders);
+      } else if (path === '/api/intel/splunk') {
+        // Fetch threat intel from Splunk and (optionally) store to IOC DO
+        try {
+          const searchParam = url.searchParams.get('search');
+          const effectiveSearch = searchParam || env?.SPLUNK_SEARCH || '';
+          if (!effectiveSearch) {
+            return new Response(JSON.stringify({ error: "Missing 'search' parameter and SPLUNK_SEARCH not set" }), {
+              status: 400,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+          }
+
+          const intel = await fetchSplunkThreatIntel(env, effectiveSearch);
+
+          // Best-effort batch store into DO so they appear in /api/ioc/list
+          try {
+            if (Array.isArray(intel.results) && intel.results.length) {
+              const id = env.IOC_STORAGE.idFromName('global');
+              const stub = env.IOC_STORAGE.get(id);
+              await stub.fetch(new Request('https://internal/store-batch', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  source: 'splunk',
+                  items: intel.results.map((item) => ({
+                    indicator: item.indicator,
+                    type: item.type,
+                    enrichmentData: item
+                  }))
+                })
+              }));
+            }
+          } catch (doError) {
+            console.warn('DO batch store failed:', doError?.message || doError);
+          }
+
+          return new Response(JSON.stringify(intel), {
+            status: 200,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        } catch (splunkError) {
+          console.error('Splunk intel error:', splunkError?.stack || splunkError);
+          return new Response(JSON.stringify({ error: String(splunkError?.message || splunkError) }), {
+            status: 502,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
       } else if (path === '/api/health') {
         return new Response(JSON.stringify({ status: 'healthy', timestamp: new Date().toISOString() }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
