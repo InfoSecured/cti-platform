@@ -1,6 +1,8 @@
 // ============================================================================
 // DURABLE OBJECT: IOC Storage
 // ============================================================================
+import { queryCrowdStrikeIndicator } from "./integrations/crowdstrike";
+
 export class IOCStorage {
   constructor(state, env) {
     this.state = state;
@@ -132,125 +134,6 @@ export class IOCStorage {
 }
 
 // ============================================================================
-// CROWDSTRIKE FALCON INTEGRATION
-// ============================================================================
-class CrowdstrikeIntegration {
-  constructor(env) {
-    this.env = env;
-    this.baseUrl = 'https://api.crowdstrike.com';
-    this.tokenCache = null;
-    this.tokenExpiry = null;
-  }
-
-  async getAccessToken() {
-    // Check if we have a cached valid token
-    if (this.tokenCache && this.tokenExpiry && Date.now() < this.tokenExpiry) {
-      return this.tokenCache;
-    }
-
-    // Check KV cache first
-    const cachedToken = await this.env.CTI_CACHE.get('crowdstrike_token', { type: 'json' });
-    if (cachedToken && cachedToken.expiry > Date.now()) {
-      this.tokenCache = cachedToken.token;
-      this.tokenExpiry = cachedToken.expiry;
-      return this.tokenCache;
-    }
-
-    // Get new token
-    const response = await fetch(`${this.baseUrl}/oauth2/token`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Accept': 'application/json'
-      },
-      body: new URLSearchParams({
-        client_id: this.env.CROWDSTRIKE_CLIENT_ID,
-        client_secret: this.env.CROWDSTRIKE_CLIENT_SECRET,
-        grant_type: 'client_credentials'
-      })
-    });
-
-    if (!response.ok) {
-      throw new Error(`Crowdstrike auth failed: ${response.status}`);
-    }
-
-    const data = await response.json();
-    this.tokenCache = data.access_token;
-    this.tokenExpiry = Date.now() + (data.expires_in * 1000) - 60000; // 1 min buffer
-
-    // Cache in KV
-    await this.env.CTI_CACHE.put('crowdstrike_token', JSON.stringify({
-      token: this.tokenCache,
-      expiry: this.tokenExpiry
-    }), { expirationTtl: data.expires_in - 60 });
-
-    return this.tokenCache;
-  }
-
-  async enrichIOC(indicator, type) {
-    const token = await this.getAccessToken();
-
-    // Determine the appropriate API endpoint based on type
-    let endpoint, body;
-    
-    if (type === 'ip') {
-      endpoint = '/indicators/entities/iocs/v1';
-      body = JSON.stringify({
-        type: 'ipv4',
-        value: indicator
-      });
-    } else if (type === 'domain') {
-      endpoint = '/indicators/entities/iocs/v1';
-      body = JSON.stringify({
-        type: 'domain',
-        value: indicator
-      });
-    } else if (type === 'hash') {
-      endpoint = '/indicators/entities/iocs/v1';
-      body = JSON.stringify({
-        type: 'sha256',
-        value: indicator
-      });
-    } else {
-      throw new Error('Unsupported indicator type');
-    }
-
-    const response = await fetch(`${this.baseUrl}${endpoint}`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      },
-      body
-    });
-
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Crowdstrike API error: ${response.status} - ${error}`);
-    }
-
-    return await response.json();
-  }
-
-  async searchDetections(indicator) {
-    const token = await this.getAccessToken();
-
-    const response = await fetch(`${this.baseUrl}/detects/queries/detects/v1?filter=behaviors.ioc_value:'${indicator}'`, {
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      }
-    });
-
-    if (!response.ok) {
-      throw new Error(`Crowdstrike detection search failed: ${response.status}`);
-    }
-
-    return await response.json();
-  }
-}
-
-// ============================================================================
 // MAIN WORKER
 // ============================================================================
 export default {
@@ -292,6 +175,13 @@ export default {
   }
 };
 
+function jsonResponse(payload, statusCode = 200, extraHeaders = {}) {
+  return new Response(JSON.stringify(payload), {
+    status: statusCode,
+    headers: { "Content-Type": "application/json", ...extraHeaders }
+  });
+}
+
 // ============================================================================
 // REQUEST HANDLERS
 // ============================================================================
@@ -320,15 +210,13 @@ async function handleIOCRequest(request, env, corsHeaders) {
 
 async function handleEnrichRequest(request, env, corsHeaders) {
   const url = new URL(request.url);
-  const indicator = url.searchParams.get('indicator');
-  const type = url.searchParams.get('type');
-  const source = url.searchParams.get('source') || 'crowdstrike';
+  const indicatorRaw = url.searchParams.get('value') || url.searchParams.get('indicator') || '';
+  const indicator = (indicatorRaw || '').trim();
+  const requestedType = (url.searchParams.get('type') || '').trim();
+  const source = (url.searchParams.get('source') || 'crowdstrike').toLowerCase();
 
-  if (!indicator || !type) {
-    return new Response(JSON.stringify({ error: 'Missing indicator or type parameter' }), {
-      status: 400,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-    });
+  if (!indicator) {
+    return jsonResponse({ error: 'Missing indicator value (use ?value= or ?indicator=)' }, 400, { ...corsHeaders });
   }
 
   // Check cache first
@@ -341,46 +229,47 @@ async function handleEnrichRequest(request, env, corsHeaders) {
     });
   }
 
-  // Enrich based on source
   let enrichmentData;
-  
+
   if (source === 'crowdstrike') {
-    const cs = new CrowdstrikeIntegration(env);
-    const iocData = await cs.enrichIOC(indicator, type);
-    const detections = await cs.searchDetections(indicator);
-    
-    enrichmentData = {
-      indicator,
-      type,
-      source: 'crowdstrike',
-      data: iocData,
-      detections: detections.resources?.length || 0,
-      timestamp: new Date().toISOString()
-    };
+    try {
+      const queryResult = await queryCrowdStrikeIndicator(env, indicator);
+      const first = Array.isArray(queryResult.results) && queryResult.results.length > 0 ? queryResult.results[0] : null;
+      const normalizedType = requestedType || (first?.type || 'unknown');
+
+      enrichmentData = {
+        indicator,
+        type: normalizedType,
+        source: 'crowdstrike',
+        results: queryResult.results,
+        timestamp: new Date().toISOString()
+      };
+    } catch (crowdstrikeError) {
+      console.error('CrowdStrike enrich error:', crowdstrikeError?.stack || crowdstrikeError);
+      return jsonResponse({ error: 'CrowdStrike enrich failed' }, 502, { ...corsHeaders });
+    }
   } else {
-    return new Response(JSON.stringify({ error: 'Unsupported enrichment source' }), {
-      status: 400,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-    });
+    return jsonResponse({ error: 'Unsupported enrichment source' }, 400, { ...corsHeaders });
   }
 
-  // Cache the result for 1 hour
-  await env.CTI_CACHE.put(cacheKey, JSON.stringify(enrichmentData), { expirationTtl: 3600 });
+  try {
+    await env.CTI_CACHE.put(cacheKey, JSON.stringify(enrichmentData), { expirationTtl: 3600 });
+  } catch (cacheError) {
+    console.warn('KV put failed for enrichment cache:', cacheError?.message || cacheError);
+  }
 
-  // Store in Durable Object
-  const id = env.IOC_STORAGE.idFromName('global');
-  const stub = env.IOC_STORAGE.get(id);
-  await stub.fetch(new Request('https://dummy/store', {
-    method: 'POST',
-    body: JSON.stringify({
-      indicator,
-      type,
-      enrichmentData,
-      source
-    })
-  }));
+  // Store in Durable Object (best-effort)
+  try {
+    const id = env.IOC_STORAGE.idFromName('global');
+    const stub = env.IOC_STORAGE.get(id);
+    await stub.fetch(new Request('https://internal/store', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ indicator, type: enrichmentData.type, enrichmentData, source })
+    }));
+  } catch (doError) {
+    console.warn('DO store failed:', doError?.message || doError);
+  }
 
-  return new Response(JSON.stringify(enrichmentData), {
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-  });
+  return jsonResponse(enrichmentData, 200, { ...corsHeaders });
 }
