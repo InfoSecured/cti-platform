@@ -5,7 +5,7 @@ compatibility_date = "2024-10-19"
 # KV Namespaces
 [[kv_namespaces]]
 binding = "CTI_CACHE"
-id = "YOUR_KV_NAMESPACE_ID"  # Replace after running: wrangler kv:namespace create "CTI_CACHE"
+id = "933970b23431435f953a911983c658e3"  # Replace after running: wrangler kv:namespace create "CTI_CACHE"
 
 # Durable Objects
 [[durable_objects.bindings]]
