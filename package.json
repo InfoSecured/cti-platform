@@ -1,0 +1,30 @@
+{
+  "name": "cti-platform",
+  "version": "1.0.0",
+  "description": "Enterprise Cyber Threat Intelligence platform with agentless IOC enrichment",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "echo \"No tests yet\" && exit 0"
+  },
+  "keywords": [
+    "cybersecurity",
+    "threat-intelligence",
+    "ioc",
+    "cloudflare-workers",
+    "durable-objects",
+    "security-automation",
+    "soc",
+    "siem",
+    "mitre-attack"
+  ],
+  "author": "Jason Lazerus",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/InfoSecured/cti-platform.git"
+  },
+  "devDependencies": {
+    "wrangler": "^3.0.0"
+  }
+}

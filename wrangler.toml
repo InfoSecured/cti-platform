@@ -1,0 +1,32 @@
+name = "cti-platform"
+main = "src/index.js"
+compatibility_date = "2024-10-19"
+
+# KV Namespaces
+[[kv_namespaces]]
+binding = "CTI_CACHE"
+id = "YOUR_KV_NAMESPACE_ID"  # Replace after running: wrangler kv:namespace create "CTI_CACHE"
+
+# Durable Objects
+[[durable_objects.bindings]]
+name = "IOC_STORAGE"
+class_name = "IOCStorage"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["IOCStorage"]
+
+# Environment variables (non-sensitive - safe to commit)
+[vars]
+ENVIRONMENT = "production"
+PLATFORM_NAME = "CTI Platform"
+
+# Secrets (set via wrangler secret put - NEVER commit these!)
+# Run these commands to set secrets:
+# wrangler secret put CROWDSTRIKE_CLIENT_ID
+# wrangler secret put CROWDSTRIKE_CLIENT_SECRET
+# wrangler secret put VIRUSTOTAL_API_KEY
+# wrangler secret put ABUSEIPDB_API_KEY
+# wrangler secret put SHODAN_API_KEY
+# wrangler secret put MISP_API_KEY
+# wrangler secret put OPENCTI_API_KEY
