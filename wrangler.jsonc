@@ -1,5 +1,5 @@
 {
-  "name": "cti-platform",
+  "name": "cyber-threat-intelligence-platform",
   "main": "src/index.js",
   "compatibility_date": "2024-10-19",
 
