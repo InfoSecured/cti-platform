@@ -15,6 +15,14 @@
   <script type="text/babel">
     const { useState, useEffect } = React;
 
+    // Persistent storage keys
+    const STORAGE_KEYS = {
+      orgName: 'cti_org_name',
+      logoUrl: 'cti_logo_url',
+      colorScheme: 'cti_color_scheme',
+      darkMode: 'cti_dark_mode'
+    };
+
     // Stable, top-level Settings view to avoid remount on each keystroke
     function SettingsView({
       darkMode,
@@ -110,11 +118,36 @@
     }
 
     const CTIPlatform = () => {
-      const [darkMode, setDarkMode] = useState(true);
+      const [darkMode, setDarkMode] = useState(() => {
+        try {
+          const stored = localStorage.getItem(STORAGE_KEYS.darkMode);
+          return stored ? JSON.parse(stored) : true;
+        } catch {
+          return true;
+        }
+      });
       const [currentView, setCurrentView] = useState('dashboard');
-      const [colorScheme, setColorScheme] = useState('cyber-red');
-      const [orgName, setOrgName] = useState('Your Organization');
-      const [logoUrl, setLogoUrl] = useState('');
+      const [colorScheme, setColorScheme] = useState(() => {
+        try {
+          return localStorage.getItem(STORAGE_KEYS.colorScheme) || 'cyber-red';
+        } catch {
+          return 'cyber-red';
+        }
+      });
+      const [orgName, setOrgName] = useState(() => {
+        try {
+          return localStorage.getItem(STORAGE_KEYS.orgName) || 'Your Organization';
+        } catch {
+          return 'Your Organization';
+        }
+      });
+      const [logoUrl, setLogoUrl] = useState(() => {
+        try {
+          return localStorage.getItem(STORAGE_KEYS.logoUrl) || '';
+        } catch {
+          return '';
+        }
+      });
       const [showSettings, setShowSettings] = useState(false);
 
       // Color schemes
@@ -193,6 +226,27 @@
           reader.readAsDataURL(file);
         }
       };
+
+      // Persist key settings to localStorage
+      useEffect(() => {
+        try { localStorage.setItem(STORAGE_KEYS.darkMode, JSON.stringify(darkMode)); } catch {}
+      }, [darkMode]);
+
+      useEffect(() => {
+        try { localStorage.setItem(STORAGE_KEYS.colorScheme, colorScheme); } catch {}
+      }, [colorScheme]);
+
+      useEffect(() => {
+        try { localStorage.setItem(STORAGE_KEYS.orgName, orgName); } catch {}
+      }, [orgName]);
+
+      useEffect(() => {
+        try {
+          if (typeof logoUrl === 'string' && logoUrl.length <= 5_000_000) {
+            localStorage.setItem(STORAGE_KEYS.logoUrl, logoUrl);
+          }
+        } catch {}
+      }, [logoUrl]);
 
       // ------- API helpers -------
       async function fetchIocList(limit = 100, offset = 0, typeFilter = "") {
