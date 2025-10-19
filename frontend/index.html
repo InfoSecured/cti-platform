@@ -20,7 +20,8 @@
       orgName: 'cti_org_name',
       logoUrl: 'cti_logo_url',
       colorScheme: 'cti_color_scheme',
-      darkMode: 'cti_dark_mode'
+      darkMode: 'cti_dark_mode',
+      showOrgName: 'cti_show_org_name'
     };
 
     // Stable, top-level Settings view to avoid remount on each keystroke
@@ -33,7 +34,9 @@
       handleLogoUpload,
       colorScheme,
       setColorScheme,
-      colorSchemes
+      colorSchemes,
+      showOrgName,
+      setShowOrgName
     }) {
       return (
         <div className="space-y-6">
@@ -41,15 +44,32 @@
             <h2 className="text-2xl font-bold mb-6">Platform Settings</h2>
             
             <div className="space-y-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium">Show Organization Name</p>
+                  <p className={`${darkMode ? 'text-gray-400' : 'text-gray-600'} text-xs`}>When off, the header will display "Threat Intelligence Platform" under the logo.</p>
+                </div>
+                <label className="relative inline-block w-12 h-6">
+                  <input
+                    type="checkbox"
+                    className="sr-only peer"
+                    checked={!!showOrgName}
+                    onChange={(event) => setShowOrgName(event.target.checked)}
+                  />
+                  <div className={`w-12 h-6 ${darkMode ? 'bg-gray-600' : 'bg-gray-300'} rounded-full peer-checked:bg-green-500 transition-colors`}></div>
+                  <div className="absolute left-1 top-1 w-4 h-4 bg-white rounded-full transition-transform peer-checked:translate-x-6"></div>
+                </label>
+              </div>
               <div>
                 <label className="block text-sm font-medium mb-2">Organization Name</label>
                 <input
                   type="text"
                   value={orgName}
                   onChange={(e) => setOrgName(e.target.value)}
+                  disabled={!showOrgName}
                   className={`w-full px-4 py-2 rounded-lg border ${
                     darkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-300 text-gray-900'
-                  } focus:outline-none focus:ring-2`}
+                  } focus:outline-none focus:ring-2 ${!showOrgName ? 'opacity-60 cursor-not-allowed' : ''}`}
                   placeholder="Enter organization name"
                   autoFocus
                 />
@@ -148,7 +168,19 @@
           return '';
         }
       });
+      const [showOrgName, setShowOrgName] = useState(() => {
+        try {
+          const stored = localStorage.getItem(STORAGE_KEYS.showOrgName);
+          if (stored === null || stored === undefined) return true; // default on
+          return JSON.parse(stored);
+        } catch {
+          return true;
+        }
+      });
       const [showSettings, setShowSettings] = useState(false);
+      useEffect(() => {
+        try { localStorage.setItem(STORAGE_KEYS.showOrgName, JSON.stringify(!!showOrgName)); } catch {}
+      }, [showOrgName]);
 
       // Color schemes
       const colorSchemes = {
@@ -650,10 +682,12 @@
                   ) : (
                     <div className={currentScheme.text}><ShieldIcon /></div>
                   )}
-                  <div>
-                    <h1 className="text-xl font-bold">{orgName}</h1>
+                <div>
+                  <h1 className="text-xl font-bold">{showOrgName ? orgName : 'Threat Intelligence Platform'}</h1>
+                  {showOrgName && (
                     <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Threat Intelligence Platform</p>
-                  </div>
+                  )}
+                </div>
                 </div>
 
                 <div className="flex items-center gap-4">
@@ -718,6 +752,8 @@
                 colorScheme={colorScheme}
                 setColorScheme={setColorScheme}
                 colorSchemes={colorSchemes}
+                showOrgName={showOrgName}
+                setShowOrgName={setShowOrgName}
               />
             ) : currentView === 'dashboard' ? (
               <DashboardView />
